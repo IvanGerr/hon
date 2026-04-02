@@ -82,6 +82,12 @@ async def async_setup_entry(hass, entry: ConfigEntry, async_add_entities) -> Non
         if appliance['applianceTypeId'] == 11:
             coordinator = await hon.async_get_coordinator(appliance)
             await coordinator.async_config_entry_first_refresh()
+            if "settings" not in coordinator.device.commands:
+                _LOGGER.warning(
+                    "Skipping hOn climate entity for [%s] because settings command is unavailable",
+                    appliance.get("nickName", appliance.get("modelName", appliance.get("macAddress"))),
+                )
+                continue
             appliances.append(HonClimateEntity(hass, coordinator, entry, appliance))
 
     async_add_entities(appliances)

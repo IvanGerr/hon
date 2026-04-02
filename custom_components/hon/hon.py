@@ -8,6 +8,7 @@ import json
 import re
 import ast
 import time
+import html
 import urllib.parse
 from urllib.parse import quote
 from datetime import datetime, timezone, timedelta
@@ -136,6 +137,58 @@ class HonConnection:
 
         return 0
 
+    def _extract_oauth_tokens(self, content):
+        if not content:
+            return {}
+
+        decoded = html.unescape(content)
+        for candidate in (decoded, decoded.lstrip("#?")):
+            parsed = urllib.parse.urlsplit(candidate)
+            for values in (parsed.fragment, parsed.query, candidate):
+                if not values:
+                    continue
+                params = urllib.parse.parse_qs(values)
+                if "id_token" in params:
+                    return {
+                        key: value[0]
+                        for key, value in params.items()
+                        if value and key in ("id_token", "refresh_token", "access_token")
+                    }
+
+        tokens = {}
+        for key in ("id_token", "refresh_token", "access_token"):
+            match = re.search(rf"{key}=([^&\"'<>\\s]+)", decoded)
+            if match:
+                tokens[key] = urllib.parse.unquote(match.group(1))
+        return tokens
+
+    def _extract_redirect_url(self, content, base_url=""):
+        if not content:
+            return ""
+
+        href_matches = re.findall(r'href="([^"]+)"', content)
+        for href in href_matches:
+            url = html.unescape(href)
+            if "ProgressiveLogin" in url or "AuthorizationPage" in url or "hOnRedirect" in url:
+                return urllib.parse.urljoin(base_url, url)
+
+        patterns = (
+            r"handleRedirect\('([^']+)'\)",
+            r"window\.location\.replace\('([^']+)'\)",
+            r"window\.location\.href\s*=\s*'([^']+)'",
+            r"var url = '([^']+)'",
+            r'action="([^"]+)"',
+        )
+        for pattern in patterns:
+            match = re.search(pattern, content)
+            if not match:
+                continue
+            url = html.unescape(match.group(1))
+            if url.startswith("hon://"):
+                return url
+            return urllib.parse.urljoin(base_url, url)
+        return ""
+
     async def async_authorize(self):
 
         if await self.async_get_frontdoor_url(0) == 1:
@@ -152,30 +205,36 @@ class HonConnection:
             await resp.text()
             
         url = f"{AUTH_API}/services/oauth2/authorize?response_type=token+id_token&client_id=3MVG9QDx8IX8nP5T2Ha8ofvlmjLZl5L_gvfbT9.HJvpHGKoAS_dcMN8LYpTSYeVFCraUnV.2Ag1Ki7m4znVO6&redirect_uri=hon%3A%2F%2Fmobilesdk%2Fdetect%2Foauth%2Fdone&display=touch&scope=api%20openid%20refresh_token%20web&nonce=82e9f4d1-140e-4872-9fad-15e25fbf2b7c"
-        async with self._session.get(url) as resp:
-            text = await resp.text()
-            array = []
-            try:
-                array = text.split("'", 2)
+        text = ""
+        for _ in range(6):
+            async with self._session.get(url) as resp:
+                text = await resp.text()
+                response_url = str(resp.url)
 
-                if( len(array) == 1 ):
-                    #Implement a second way to get the token value
-                    #m = re.search('id_token\=(.+?)&', text) Works but deprecation warning
-                    m = re.search('id_token\\=(.+?)&', text)
-                    if m:
-                        self._id_token = m.group(1)
-                    else:
-                        _LOGGER.error("Unable to get [id_token] during authorization process (tried both options). Full response [" + text + "]")
-                        return False
-                else:
-                    params = urllib.parse.parse_qs(array[1])
-                    self._id_token = params["id_token"][0]
-            except:
-                if "ChangePassword" not in text:
-                    _LOGGER.error("Unable to get [id_token] during authorization process. Full response [" + text + "]")
-                else:
-                    _LOGGER.error("Unable to get connect. You need to change your password on the hOn app or go to https://account2.hon-smarthome.com/")
+            params = self._extract_oauth_tokens(text)
+            if not params:
+                redirect_url = self._extract_redirect_url(text, response_url)
+                params = self._extract_oauth_tokens(redirect_url)
+            else:
+                redirect_url = ""
+
+            if "id_token" in params:
+                self._id_token = params["id_token"]
+                self._refresh_token = params.get("refresh_token", self._refresh_token)
+                break
+
+            if "ChangePassword" in text or "ChangePassword" in redirect_url:
+                _LOGGER.error("Unable to get connect. You need to change your password on the hOn app or go to https://account2.hon-smarthome.com/")
                 return False
+
+            if not redirect_url or redirect_url == url:
+                _LOGGER.error("Unable to get [id_token] during authorization process. Full response [" + text + "]")
+                return False
+
+            url = redirect_url
+        else:
+            _LOGGER.error("Unable to get [id_token] during authorization process. Full response [" + text + "]")
+            return False
 
         post_headers = {"id-token": self._id_token}
         data = {"appVersion": APP_VERSION,
@@ -216,8 +275,12 @@ class HonConnection:
 
 
     async def load_commands(self, appliance):
+        appliance_type = appliance["applianceTypeId"]
+        if appliance_type == 11:
+            appliance_type = appliance.get("applianceTypeName", appliance_type)
+
         params = {
-            "applianceType": appliance["applianceTypeId"],
+            "applianceType": appliance_type,
             "code": appliance["code"],
             "applianceModelId": appliance["applianceModelId"],
             "firmwareId": appliance["eepromId"],
