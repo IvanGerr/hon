@@ -216,7 +216,8 @@ class HonSwitchEntity(HonBaseSwitchEntity):
         if not self._device.get("remoteCtrValid", "1") == "1":
             _LOGGER.warning("HonSwitchEntity not available: remoteCtrValid==1")
             return False
-        if self._device.get("attributes.lastConnEvent.category") == "DISCONNECTED":
+        last_conn_event = self._device.get("attributes.lastConnEvent", {})
+        if isinstance(last_conn_event, dict) and last_conn_event.get("category") == "DISCONNECTED":
             _LOGGER.warning("HonSwitchEntity not available: DISCONNECTED")
             return False
         

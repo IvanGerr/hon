@@ -172,11 +172,24 @@ class HonConnection:
             if "ProgressiveLogin" in url or "AuthorizationPage" in url or "hOnRedirect" in url:
                 return urllib.parse.urljoin(base_url, url)
 
+        variables = {
+            name: html.unescape(value)
+            for name, value in re.findall(r"var\s+([A-Za-z_]\w*)\s*=\s*'([^']+)'", content)
+        }
+        for target in re.findall(r"window\.location\s*=\s*([A-Za-z_]\w*)", content):
+            if target in variables:
+                url = variables[target]
+                if url.startswith("hon://"):
+                    return url
+                return urllib.parse.urljoin(base_url, url)
+
         patterns = (
             r"handleRedirect\('([^']+)'\)",
             r"window\.location\.replace\('([^']+)'\)",
             r"window\.location\.href\s*=\s*'([^']+)'",
+            r"window\.location\s*=\s*'([^']+)'",
             r"var url = '([^']+)'",
+            r"var redirectUrl = '([^']+)'",
             r'action="([^"]+)"',
         )
         for pattern in patterns:
