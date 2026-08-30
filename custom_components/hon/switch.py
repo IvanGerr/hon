@@ -105,7 +105,7 @@ async def async_setup_entry(hass, entry: ConfigEntry, async_add_entities) -> Non
 
             description = HonSwitchEntityDescription(
                 key="10degreeHeatingStatus",
-                name="10? Heating",
+                name="10° Heating",
                 icon="mdi:heat-wave",
                 translation_key="10_degree_heating",
             )
@@ -125,6 +125,17 @@ async def async_setup_entry(hass, entry: ConfigEntry, async_add_entities) -> Non
             appliances.extend([HonSwitchEntity(hass, coordinator, entry, appliance, description)])
             await coordinator.async_request_refresh()
 
+        if (("settings" in device.commands) 
+            and (device.get("ecoMode", "N/A") != "N/A")):
+
+            description = HonSwitchEntityDescription(
+                key="turboMode",
+                name="Turbo Mode",
+                icon="mdi:rocket-launch",
+                translation_key="turbo_mode",
+            )
+            appliances.extend([HonSwitchEntity(hass, coordinator, entry, appliance, description)])
+            await coordinator.async_request_refresh()
 
         if (("settings" in device.commands) 
             and (device.get("healthMode", "N/A") != "N/A")):
@@ -233,8 +244,10 @@ class HonSwitchEntity(HonBaseSwitchEntity):
 
     @callback
     def _handle_coordinator_update(self, update: bool = True) -> None:
+        #if( self._key == "screenDisplayStatus" ):
+        #    _LOGGER.warning(f"HonSwitchEntity screenDisplayStatus value {self._device.get(self._key)}" )
+        #if( self._key == "echoStatus" ):
+        #    _LOGGER.warning(f"HonSwitchEntity echoStatus value {self._device.get(self._key)}" )
         self._attr_is_on = self.is_on
         if update:
             self.async_write_ha_state()
-
-
